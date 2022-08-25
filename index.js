@@ -13,7 +13,8 @@ const {
   local, // 地址信息
   startDay, // 纪念日
   EmailSubject, // 邮件主题
-  EmailTo, // 收件人邮箱
+  bbEmail, // 收件人邮箱
+  myEmail,
 } = require("./config.json");
 
 /** 获取一个APP url地址 */
@@ -43,42 +44,48 @@ const getTogetherDay = () => {
 const [lastDay, todaystr] = getTogetherDay();
 
 /** 发送邮件方法 */
-const sendEmailFn = async (html, count = 0) => {
-  const testAccount = await nodemailer.createTestAccount();
-  const transporter = nodemailer.createTransport({
-    host: "smtp.qq.com",
-    port: 587,
-    secure: false,
-    auth: EamilAuth,
-  });
-  await transporter.sendMail(
-    {
+const sendEmailFn = async (html, count = 0, sendTo) => {
+  try {
+    console.log(`开始向 ${sendTo} 发送邮件...`);
+    const testAccount = await nodemailer.createTestAccount();
+    const transporter = nodemailer.createTransport({
+      host: "smtp.qq.com",
+      port: 587,
+      secure: false,
+      auth: EamilAuth,
+    });
+    const info = await transporter.sendMail({
       from: EmailFrom,
-      to: EmailTo,
+      to: bbEmail,
       subject: EmailSubject,
       html,
-    },
-    (err, info = {}) => {
-      if (count > 2) return;
-      if (err) {
-        console.log(`${todaystr} 发送邮件失败，重试第${count + 1}次...`);
-        return setTimeout(() => {
-          sendEmailFn(html, count + 1);
-        }, 2000);
-      }
-      console.log(todaystr, "邮件发送成功", info.messageId);
+    });
+    if (info) console.log(todaystr, `向 ${sendTo} 邮件发送成功`);
+  } catch (err) {
+    if (count > 2) {
+      sendEmailFn(null, 0, myEmail);
+      return console.log("重试三次均失败，程序结束");
     }
-  );
+    if (err) {
+      console.log(`${todaystr} 向 ${sendTo} 发送邮件失败，
+      报错信息为：${err},
+      重试第${count + 1}次...`);
+      return setTimeout(() => {
+        sendEmailFn(html, count + 1);
+      }, 2000);
+    }
+  }
 };
 
 /** 获取ONE内容 */
 const getOneData = () => {
+  console.log("开始获取ONE内容...");
   return new Promise((resolve, reject) => {
     superagent.get(OneUrl).end((err, res) => {
       if (err) {
         reject(err);
       }
-      const $ = cheerio.load(res.text);
+      const $ = cheerio.load(res?.text);
       const selectItem = $("#carousel-one .carousel-inner .item");
       const todayOne = selectItem[0];
       const todayOneData = {
@@ -92,6 +99,7 @@ const getOneData = () => {
           .text()
           .replace(/(^\s*)|(\s*$)/g, ""),
       };
+      console.log("获取ONE内容成功");
       resolve(todayOneData);
     });
   });
@@ -99,6 +107,7 @@ const getOneData = () => {
 
 /** 获取天气预报 */
 const getWeatherData = () => {
+  console.log("开始获取天气预报信息...");
   return new Promise((resolve, reject) => {
     superagent.get(WeatherUrl).end((err, res) => {
       if (err) {
@@ -106,8 +115,8 @@ const getWeatherData = () => {
       }
       let threeDaysData = [];
       let weatherTip = "";
-      let $ = cheerio.load(res.text);
-      $(".forecast .days").each((i, elem) => {
+      let $ = cheerio.load(res?.text);
+      $(".forecast .days")?.each((i, elem) => {
         const SingleDay = $(elem).find("li");
         threeDaysData.push({
           Day: $(SingleDay[0])
@@ -134,6 +143,7 @@ const getWeatherData = () => {
           PollutionLevel: $(SingleDay[4]).find("strong").attr("class"),
         });
       });
+      console.log("获取天气预报信息成功");
       resolve(threeDaysData);
     });
   });
@@ -141,6 +151,7 @@ const getWeatherData = () => {
 
 /** 获取天气提醒方法 */
 const getWeatherTips = () => {
+  console.log("开始获取天气提醒信息...");
   return new Promise((resolve, reject) => {
     superagent.get(WeatherUrl).end((err, res) => {
       if (err) {
@@ -148,10 +159,11 @@ const getWeatherTips = () => {
       }
       const threeDaysData = [];
       let weatherTip = "";
-      let $ = cheerio.load(res.text);
-      $(".wea_tips").each((i, elem) => {
+      let $ = cheerio.load(res?.text);
+      $(".wea_tips")?.each((i, elem) => {
         weatherTip = $(elem).find("em").text();
       });
+      console.log("获取天气提醒信息成功");
       resolve(weatherTip);
     });
   });
@@ -159,24 +171,27 @@ const getWeatherTips = () => {
 
 /** 获取暖心话方法 */
 const getWarmSentence = () => {
+  console.log("开始获取暖心话信息...");
   return new Promise((resolve, reject) => {
     axios
       .get(warmSentenceUrl)
       .then((res) => {
         if (res?.data && res?.data?.code === 200) {
+          console.log("获取暖心话信息成功");
           resolve(res.data?.text);
         } else {
           reject("数据异常");
         }
       })
       .catch((err) => {
-        reject("请求失败");
+        reject("请求失败", err);
       });
   });
 };
 
 /** 聚合 */
-const main = async () => {
+const main = async (count = 0) => {
+  console.log(todaystr + " 开始执行主函数");
   const HtmlData = {
     lastDay,
     todaystr,
@@ -201,17 +216,33 @@ const main = async () => {
         fs.readFileSync(path.resolve(__dirname, "view.ejs"), "utf8")
       );
       const html = template(HtmlData);
-      sendEmailFn(html);
+      // const today = new Date();
+      // const todaystr = `${today.getFullYear()}${today.getMonth()}${today.getDate()}`;
+      // fs.writeFileSync(`./everyday/${todaystr}.html`, html);
+      sendEmailFn(html, 0, bbEmail);
+      sendEmailFn(html, 0, myEmail);
     })
     .catch((err) => {
-      console.log("获取数据失败： ", err);
+      if (count > 2) {
+        sendEmailFn(null, 0, myEmail);
+        return console.log("重试三次均失败，程序结束");
+      }
+      if (err) {
+        console.log(`${todaystr} 获取数据失败，
+        报错信息为：${err},
+        重试第${count + 1}次...`);
+        return setTimeout(() => {
+          main(count + 1);
+        }, 2000);
+      }
     });
 };
 
-console.log("项目启动===>");
+console.log("<--------发送暖心话项目启动-------->");
 
 /** 定时任务方法 */
 schedule.scheduleJob("00 00 10 * * *", async () => {
-  console.log(todaystr, "定时任务执行了!");
+  console.log(todaystr, "到十点了，定时任务开始执行----->");
   main();
+  console.log(todaystr, "定时任务执行完毕，等待下一次执行");
 });
